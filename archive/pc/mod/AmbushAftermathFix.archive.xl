@@ -1,0 +1,4 @@
+quest:
+  phases:
+    - path: ambush_aftermath_fix\quest\cleanup_2.questphase
+      parent: cyberpunk2077.quest
