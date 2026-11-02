@@ -2,9 +2,10 @@
 
 The phase waits until the q305 convoy chase is over (or the quest is done),
 then switches off the ambush effects and lighting that the ambush cutscene
-leaves switched on, and restores the catwalk and billboards it removes.
+leaves switched on. The main version also restores the catwalk and
+billboards the ambush removes; the No Catwalk version leaves them out.
 
-Usage: python make_questphase.py <output .questphase.json>
+Usage: python make_questphase.py main|no-catwalk <output .questphase.json>
 """
 import json
 import sys
@@ -23,7 +24,7 @@ BARRELS = [
 ]
 
 # (prefab, [(variant, show)])
-VARIANTS = [
+CLEANUP = [
     (FX, [
         ("fx_after_detonation", 0),
         ("fx_boom_car", 0),
@@ -36,19 +37,6 @@ VARIANTS = [
     ("#q305_ambush", [("q305_vfa_during_ambush", 0)]),
     ("#q305_ambush_smokescreen", [("smokescreen", 0)]),
     ("#q305_street_lamp_vfx_impulse", [("q305_after_ambush_vfx", 0)]),
-    # The catwalk with billboards that the crash in the cutscene destroys.
-    # These are the states the cutscene itself uses to reset the scene.
-    # #q305_destruction sits inside the blockout prefab.
-    ("#loc_q305_netwatch_ambush_blockout", [
-        ("sign_before_explosion", 1),
-        ("sign_after_explosion", 0),
-    ]),
-    ("#q305_destruction", [
-        ("car_hit_before", 1),
-        ("car_hit_before_screen_a", 1),
-        ("car_hit_after", 0),
-        ("q305_group_screen_b_emp_cutscene", 0),
-    ]),
     (STORM, [("q305_NetwatchAmbushThunderstormFX", 0), ("storm_dissapear", 0)]),
     (LIGHTING, [
         ("q305_lights_blackout", 0),
@@ -73,6 +61,39 @@ VARIANTS = [
 # The others cover saves where the quest's own cleanup or ending ran.
 TRIGGER_FACTS = ["q305_main_part_done", "q305_chase_deco_clean_done", "q305_done"]
 DONE_FACT = "ambush_aftermath_fix_done"
+
+# The catwalk with billboards above the street. The ambush cutscene wrecks
+# it, and the chase later hides the wreck too (it comes with debris across
+# the road), leaving nothing there. #q305_destruction sits inside the
+# blockout prefab, so the blockout's state decides whether any of it shows.
+#
+# Main version: restore it, using the states the cutscene itself uses to
+# reset the scene.
+CATWALK_RESTORE = [
+    ("#loc_q305_netwatch_ambush_blockout", [
+        ("sign_before_explosion", 1),
+        ("sign_after_explosion", 0),
+    ]),
+    ("#q305_destruction", [
+        ("car_hit_before", 1),
+        ("car_hit_before_screen_a", 1),
+        ("car_hit_after", 0),
+        ("q305_group_screen_b_emp_cutscene", 0),
+    ]),
+]
+
+# No Catwalk version: leave it out, as the game does after the quest.
+CATWALK_HIDE = [
+    ("#loc_q305_netwatch_ambush_blockout", [
+        ("sign_before_explosion", 0),
+        ("sign_after_explosion", 0),
+    ]),
+]
+
+PHASES = {
+    "main": (CLEANUP + CATWALK_RESTORE, TRIGGER_FACTS, DONE_FACT),
+    "no-catwalk": (CLEANUP + CATWALK_HIDE, TRIGGER_FACTS, DONE_FACT),
+}
 
 
 class H:
@@ -104,7 +125,7 @@ def node(type_, id_, sockets, **fields):
     return H(d)
 
 
-def build():
+def build(variants, trigger_facts, done_fact):
     nodes = []
     inp_out = socket("Out", "Output")
     nodes.append(node("questInputNodeDefinition", 0,
@@ -115,7 +136,7 @@ def build():
     wdm_out = socket("Out", "Output")
     end_in = socket("In", "Input")
 
-    for i, fact in enumerate(TRIGGER_FACTS):
+    for i, fact in enumerate(trigger_facts):
         p_in, p_out = socket("In", "Input"), socket("Out", "Output")
         connect(inp_out, p_in)
         connect(p_out, wdm_in)
@@ -131,7 +152,7 @@ def build():
         "prefabNodeRef": {"$type": "NodeRef", "$storage": "string", "$value": ref},
         "variantStates": [{"$type": "questVariantState", "name": cname(n), "show": s}
                           for n, s in states],
-    } for ref, states in VARIANTS]
+    } for ref, states in variants]
     nodes.append(node("questWorldDataManagerNodeDefinition", 10,
                       [socket("CutDestination", "CutDestination"), wdm_in, wdm_out],
                       type=H({"$type": "questTogglePrefabVariant_NodeType",
@@ -142,7 +163,7 @@ def build():
     connect(wdm_out, fact_in)
     nodes.append(node("questFactsDBManagerNodeDefinition", 11,
                       [socket("CutDestination", "CutDestination"), fact_in, fact_out],
-                      type=H({"$type": "questSetVar_NodeType", "factName": DONE_FACT,
+                      type=H({"$type": "questSetVar_NodeType", "factName": done_fact,
                               "setExactValue": 1, "value": 1})))
 
     connect(fact_out, end_in)
@@ -177,17 +198,17 @@ def serialize(root):
     return walk(root)
 
 
-def main(out_path):
+def main(phase, out_path):
     doc = {
         "Header": {"WolvenKitVersion": "10.0.0-beta.2-nightly.2026-10-31",
                    "WKitJsonVersion": "0.0.9", "GameVersion": 2500,
                    "DataType": "CR2W"},
         "Data": {"Version": 195, "BuildVersion": 0,
-                 "RootChunk": serialize(build()), "EmbeddedFiles": []},
+                 "RootChunk": serialize(build(*PHASES[phase])), "EmbeddedFiles": []},
     }
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=2)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(sys.argv[1], sys.argv[2])
